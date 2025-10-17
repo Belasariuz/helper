@@ -2,29 +2,86 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import { MapPin, MessageSquare, User, PlusCircle, LogOut, Home } from "lucide-react";
+import {
+  MapPin,
+  MessageSquare,
+  User,
+  PlusCircle,
+  LogOut,
+  Home,
+  ClipboardList,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createSupabaseBrowser();
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Navigatielinks
-  const nav = [
-    { href: "/", label: "Home", icon: Home },
-    { href: "/dashboard", label: "Dashboard", icon: MapPin },
-    { href: "/jobs/new", label: "Nieuwe taak", icon: PlusCircle },
-    { href: "/messages", label: "Berichten", icon: MessageSquare },
-    { href: "/profile", label: "Profiel", icon: User },
-  ];
+  // ✅ Rol van gebruiker ophalen uit Supabase-profiel
+  useEffect(() => {
+    async function fetchProfile() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return setLoading(false);
+
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      if (error) {
+        console.warn("[SiteHeader] Geen profiel gevonden:", error.message);
+        setUserRole(null);
+      } else {
+        setUserRole(profile?.role || null);
+      }
+
+      setLoading(false);
+    }
+
+    fetchProfile();
+  }, [supabase]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push("/auth/login");
   }
+
+  if (loading) {
+    return (
+      <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur dark:bg-gray-950/80">
+        <div className="container mx-auto flex h-14 items-center justify-between px-4">
+          <span className="text-sm text-muted-foreground">Laden...</span>
+        </div>
+      </header>
+    );
+  }
+
+  // ✅ Dynamische navigatie afhankelijk van rol
+  const nav =
+    userRole === "helper"
+      ? [
+          { href: "/", label: "Home", icon: Home },
+          { href: "/dashboard/helper", label: "Dashboard", icon: MapPin },
+          { href: "/dashboard/helper/accepted", label: "Mijn taken", icon: ClipboardList },
+          { href: "/messages", label: "Berichten", icon: MessageSquare },
+          { href: "/profile", label: "Profiel", icon: User },
+        ]
+      : [
+          { href: "/", label: "Home", icon: Home },
+          { href: "/dashboard/customer", label: "Dashboard", icon: MapPin },
+          { href: "/jobs/new", label: "Nieuwe taak", icon: PlusCircle },
+          { href: "/messages", label: "Berichten", icon: MessageSquare },
+          { href: "/profile", label: "Profiel", icon: User },
+        ];
 
   return (
     <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur dark:bg-gray-950/80">
