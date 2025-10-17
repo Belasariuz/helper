@@ -11,13 +11,15 @@ type Job = {
   price: number;
   status: string;
   customer_id: string;
+  created_at: string;
 };
 
-export default function AcceptedJobsPage() {
+export default function HelperAcceptedPage() {
   const supabase = createSupabaseBrowser();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ✅ taken ophalen
   useEffect(() => {
     loadAcceptedJobs();
   }, []);
@@ -28,17 +30,22 @@ export default function AcceptedJobsPage() {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      console.warn("[Helper] ❌ Geen ingelogde gebruiker");
+      return;
+    }
 
     const { data, error } = await supabase
       .from("jobs")
-      .select("id, title, description, price, status, customer_id")
+      .select(
+        "id, title, description, price, status, customer_id, created_at"
+      )
       .eq("helper_id", user.id)
       .in("status", ["accepted", "in_progress"])
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("[Helper] ❌ Fout bij ophalen geaccepteerde taken:", error);
+      console.error("[Helper] ❌ Fout bij ophalen:", error);
       setJobs([]);
     } else {
       console.log("[Helper] ✅ Geaccepteerde taken:", data);
@@ -58,7 +65,7 @@ export default function AcceptedJobsPage() {
       console.error("[Helper] ❌ Fout bij voltooien:", error);
       alert("Er ging iets mis bij het voltooien van de taak.");
     } else {
-      alert("Taak voltooid!");
+      alert("Taak gemarkeerd als voltooid!");
       loadAcceptedJobs();
     }
   }
@@ -66,7 +73,7 @@ export default function AcceptedJobsPage() {
   if (loading)
     return (
       <p className="text-center mt-10 text-muted-foreground">
-        Laden...
+        Geaccepteerde taken laden...
       </p>
     );
 
@@ -74,7 +81,7 @@ export default function AcceptedJobsPage() {
     <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Mijn geaccepteerde taken</h1>
-        <Button onClick={loadAcceptedJobs} variant="outline">
+        <Button variant="outline" onClick={loadAcceptedJobs}>
           Vernieuwen
         </Button>
       </div>
@@ -93,9 +100,22 @@ export default function AcceptedJobsPage() {
               <div>
                 <p className="font-medium">{job.title}</p>
                 <p className="text-sm text-muted-foreground">
-                  Status: {job.status} — €{job.price.toFixed(2)}
+                  Status:{" "}
+                  <span
+                    className={
+                      job.status === "completed"
+                        ? "text-green-600"
+                        : job.status === "accepted"
+                        ? "text-blue-600"
+                        : "text-yellow-600"
+                    }
+                  >
+                    {job.status}
+                  </span>{" "}
+                  – €{job.price.toFixed(2)}
                 </p>
               </div>
+
               {job.status !== "completed" && (
                 <Button
                   size="sm"

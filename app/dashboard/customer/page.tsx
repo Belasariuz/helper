@@ -10,6 +10,8 @@ type Job = {
   title: string;
   status: string;
   price: number;
+  helper_id: string | null;
+  helper_name?: string | null;
 };
 
 export default function CustomerDashboard() {
@@ -17,11 +19,32 @@ export default function CustomerDashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // ✅ taken laden en realtime updates luisteren
   useEffect(() => {
     loadJobs();
+
+    // Luister naar wijzigingen in de jobs-tabel
+    const channel = supabase
+      .channel("jobs-realtime-customer")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "jobs" },
+        (payload) => {
+          console.log("[CustomerDashboard] 🔔 Realtime update:", payload);
+          loadJobs();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
+  // ✅ taken ophalen uit Supabase
   async function loadJobs() {
+    console.log("[CustomerDashboard] 📦 Taken ophalen...");
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -29,53 +52,95 @@ export default function CustomerDashboard() {
 
     const { data, error } = await supabase
       .from("jobs")
-      .select("id, title, status, price")
+      .select(`
+        id,
+        title,
+        status,
+        price,
+        helper_id,
+        profiles:profiles!jobs_helper_id_fkey(name)
+      `)
       .eq("customer_id", user.id)
       .order("created_at", { ascending: false });
 
-    if (!error && data) setJobs(data);
+    if (error) {
+      console.error("[CustomerDashboard] ❌ Fout bij ophalen:", error);
+    } else {
+      console.log("[CustomerDashboard] ✅ Taken:", data);
+
+      // helpernaam extraheren
+      const formatted = data.map((job: any) => ({
+        ...job,
+        helper_name: job.profiles?.name ?? null,
+      }));
+
+      setJobs(formatted);
+    }
+
     setLoading(false);
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Taak verwijderen?")) return;
+    if (!confirm("Weet je zeker dat je deze taak wil verwijderen?")) return;
     await supabase.from("jobs").delete().eq("id", id);
     setJobs(jobs.filter((j) => j.id !== id));
   }
 
-  if (loading) return <p>Laden...</p>;
+  if (loading)
+    return (
+      <p className="text-center text-muted-foreground mt-10">
+        Taken laden...
+      </p>
+    );
 
-return (
-  <div className="flex justify-center px-4 py-10">
-    <div className="w-full max-w-3xl space-y-8">
-      {/* Header */}
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Mijn taken</h1>
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Mijn taken</h1>
         <Link href="/jobs/new">
-          <Button size="sm" className="shadow-sm">
-            Nieuwe taak
-          </Button>
+          <Button>Nieuwe taak</Button>
         </Link>
       </div>
 
-      {/* Content */}
       {jobs.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-muted/30 p-10 text-center text-muted-foreground">
-          <p className="text-sm">Nog geen taken geplaatst.</p>
-        </div>
+        <p className="text-muted-foreground text-center">
+          Je hebt nog geen taken geplaatst.
+        </p>
       ) : (
         <ul className="space-y-3">
           {jobs.map((job) => (
             <li
               key={job.id}
-              className="flex items-center justify-between rounded-xl border bg-white p-4 shadow-sm transition hover:shadow-md dark:bg-gray-900"
+              className="flex items-center justify-between border rounded-lg p-4"
             >
               <div>
-                <p className="font-medium text-lg">{job.title}</p>
+                <p className="font-medium">{job.title}</p>
                 <p className="text-sm text-muted-foreground">
-                  Status: {job.status} – €{job.price.toFixed(2)}
+                  Status:{" "}
+                  <span
+                    className={
+                      job.status === "open"
+                        ? "text-gray-500"
+                        : job.status === "accepted"
+                        ? "text-blue-600"
+                        : job.status === "completed"
+                        ? "text-green-600"
+                        : "text-yellow-600"
+                    }
+                  >
+                    {job.status}
+                  </span>{" "}
+                  – €{job.price.toFixed(2)}
                 </p>
+
+                {/* 👇 toon helpernaam als taak is geaccepteerd */}
+                {job.helper_name && (
+                  <p className="text-xs text-gray-500">
+                    Helper: {job.helper_name}
+                  </p>
+                )}
               </div>
+
               <Button
                 variant="destructive"
                 size="sm"
@@ -88,5 +153,5 @@ return (
         </ul>
       )}
     </div>
-  </div>
-);
+  );
+}

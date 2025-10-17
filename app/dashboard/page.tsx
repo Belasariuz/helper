@@ -1,9 +1,9 @@
-// app/dashboard/page.tsx
 import { redirect } from "next/navigation";
 import { createSupabaseServer } from "@/lib/supabase/server";
 
 export default async function DashboardPage() {
-  const supabase = createSupabaseServer();
+  // ✅ wacht op de Supabase serverclient
+  const supabase = await createSupabaseServer();
 
   const {
     data: { user },
@@ -11,14 +11,12 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/auth/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile) redirect("/profile");
-
-  if (profile.role === "helper") redirect("/dashboard/helper");
-  redirect("/dashboard/customer");
+  return (
+    <div className="flex flex-col items-center justify-center py-10">
+      <h1 className="text-3xl font-semibold mb-4">Welkom bij Helper</h1>
+      <p className="text-gray-600">
+        Ingelogd als: <strong>{user.email}</strong>
+      </p>
+    </div>
+  );
 }

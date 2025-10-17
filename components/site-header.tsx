@@ -12,76 +12,117 @@ import {
   PlusCircle,
   LogOut,
   Home,
-  ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/use-toast";
 
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createSupabaseBrowser();
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  // ✅ Rol van gebruiker ophalen uit Supabase-profiel
-  useEffect(() => {
-    async function fetchProfile() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return setLoading(false);
-
-      const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-
-      if (error) {
-        console.warn("[SiteHeader] Geen profiel gevonden:", error.message);
-        setUserRole(null);
-      } else {
-        setUserRole(profile?.role || null);
-      }
-
-      setLoading(false);
-    }
-
-    fetchProfile();
-  }, [supabase]);
+  const [notifications, setNotifications] = useState(0);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [role, setRole] = useState<"customer" | "helper" | null>(null);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push("/auth/login");
   }
 
-  if (loading) {
-    return (
-      <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur dark:bg-gray-950/80">
-        <div className="container mx-auto flex h-14 items-center justify-between px-4">
-          <span className="text-sm text-muted-foreground">Laden...</span>
-        </div>
-      </header>
-    );
-  }
+  // 🧭 Haal huidige gebruiker + rol op
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) {
+        setUserId(data.user.id);
 
-  // ✅ Dynamische navigatie afhankelijk van rol
-  const nav =
-    userRole === "helper"
-      ? [
-          { href: "/", label: "Home", icon: Home },
-          { href: "/dashboard/helper", label: "Dashboard", icon: MapPin },
-          { href: "/dashboard/helper/accepted", label: "Mijn taken", icon: ClipboardList },
-          { href: "/messages", label: "Berichten", icon: MessageSquare },
-          { href: "/profile", label: "Profiel", icon: User },
-        ]
-      : [
-          { href: "/", label: "Home", icon: Home },
-          { href: "/dashboard/customer", label: "Dashboard", icon: MapPin },
-          { href: "/jobs/new", label: "Nieuwe taak", icon: PlusCircle },
-          { href: "/messages", label: "Berichten", icon: MessageSquare },
-          { href: "/profile", label: "Profiel", icon: User },
-        ];
+        // ✅ Haal profiel en rol op
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .single();
+
+        if (profile?.role === "helper" || profile?.role === "customer") {
+          setRole(profile.role);
+          console.log("[Header] Gebruikersrol:", profile.role);
+        }
+      }
+    })();
+  }, []);
+
+  // 📡 Luister naar realtime events
+  useEffect(() => {
+    if (!userId) return;
+
+    console.log("[🔔] Notificatie listener gestart:", userId);
+
+    const channel = supabase
+      .channel("notifications")
+      // 💬 Nieuw bericht
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as any;
+          if (msg.sender_id !== userId) {
+            setNotifications((prev) => prev + 1);
+            toast({
+              title: "Nieuw bericht 💬",
+              description: "Je hebt een nieuw bericht ontvangen.",
+            });
+          }
+        }
+      )
+      // 🔄 Taakstatus update
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "jobs" },
+        (payload) => {
+          const { old, new: newData } = payload;
+          if (
+            old.status !== newData.status &&
+            (newData.customer_id === userId ||
+              newData.helper_id === userId)
+          ) {
+            setNotifications((prev) => prev + 1);
+            toast({
+              title: "Taakstatus gewijzigd 🔄",
+              description: `Status is nu: ${newData.status}`,
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId]);
+
+  // 🧹 Badge resetten
+  useEffect(() => {
+    if (pathname.startsWith("/messages") || pathname.startsWith("/dashboard")) {
+      setNotifications(0);
+    }
+  }, [pathname]);
+
+  // Dynamisch dashboard-pad
+  const dashboardPath =
+    role === "helper"
+      ? "/dashboard/helper"
+      : role === "customer"
+      ? "/dashboard/customer"
+      : "/dashboard";
+
+  const nav = [
+    { href: "/", label: "Home", icon: Home },
+    { href: dashboardPath, label: "Dashboard", icon: MapPin },
+    { href: "/jobs/new", label: "Nieuwe taak", icon: PlusCircle },
+    { href: "/messages", label: "Berichten", icon: MessageSquare },
+    { href: "/profile", label: "Profiel", icon: User },
+  ];
 
   return (
     <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur dark:bg-gray-950/80">
@@ -115,6 +156,13 @@ export function SiteHeader() {
               >
                 <Icon className="h-4 w-4" />
                 {item.label}
+
+                {/* 🔔 Badge */}
+                {item.href === "/messages" && notifications > 0 && (
+                  <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-600 text-[10px] text-white flex items-center justify-center">
+                    {notifications}
+                  </span>
+                )}
               </Link>
             );
           })}

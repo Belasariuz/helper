@@ -1,114 +1,60 @@
-// app/messages/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 
-type Job = {
-  id: string;
-  title: string;
-  status: string;
-  customer_id: string;
-  helper_id: string | null;
-  created_at: string;
-};
-
-type Row = Job & {
-  lastMessage?: { content: string; created_at: string } | null;
-};
-
-export default function MessagesPage() {
+export default function InboxPage() {
   const supabase = createSupabaseBrowser();
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [jobs, setJobs] = useState<any[]>([]);
 
   useEffect(() => {
-    loadConversations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadChats();
   }, []);
 
-  async function loadConversations() {
-    setLoading(true);
-
+  async function loadChats() {
     const {
       data: { user },
-      error: userErr,
     } = await supabase.auth.getUser();
-    if (userErr || !user) {
-      setLoading(false);
-      return;
-    }
+    if (!user) return;
 
-    // 1) Haal alle jobs waar de gebruiker deelnemer is (klant of helper)
-    const { data: jobs, error } = await supabase
+    const { data, error } = await supabase
       .from("jobs")
-      .select("id, title, status, customer_id, helper_id, created_at")
+      .select("id, title, status")
       .or(`customer_id.eq.${user.id},helper_id.eq.${user.id}`)
       .order("created_at", { ascending: false });
 
-    if (error || !jobs) {
-      setLoading(false);
-      return;
-    }
-
-    // 2) Voor elk job: haal het laatste bericht (N+1; prima voor start, later optimaliseren met een view)
-    const withLast = await Promise.all(
-      jobs.map(async (job) => {
-        const { data: last, error: msgErr } = await supabase
-          .from("messages")
-          .select("content, created_at")
-          .eq("job_id", job.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        return { ...job, lastMessage: msgErr ? null : last ?? null } as Row;
-      })
-    );
-
-    setRows(withLast);
-    setLoading(false);
+    if (error) console.error(error);
+    else setJobs(data || []);
   }
 
-  const empty = useMemo(() => !loading && rows.length === 0, [loading, rows]);
-
-  if (loading) return <div className="flex justify-center py-10">Laden…</div>;
-
   return (
-    <div className="flex justify-center px-4 py-10">
-      <div className="w-full max-w-3xl space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-semibold tracking-tight">Berichten</h1>
-        </div>
+    <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
+      <h1 className="text-2xl font-semibold">Berichten</h1>
 
-        {empty ? (
-          <div className="rounded-xl border border-dashed bg-muted/30 p-10 text-center text-muted-foreground">
-            Je hebt nog geen gesprekken. Plaats of accepteer eerst een taak.
-          </div>
-        ) : (
-          <ul className="space-y-3">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="rounded-xl border bg-white p-4 shadow-sm transition hover:shadow-md dark:bg-gray-900"
-              >
-                <Link href={`/jobs/${row.id}/chat`} className="block">
-                  <div className="flex items-center justify-between">
-                    <p className="font-medium text-lg">{row.title}</p>
-                    <span className="text-xs rounded-full border px-2 py-1 text-muted-foreground">
-                      {row.status}
-                    </span>
-                  </div>
-                  <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
-                    {row.lastMessage?.content ?? "Nog geen berichten"}
-                  </p>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {jobs.length === 0 ? (
+        <p className="text-muted-foreground text-center">
+          Nog geen gesprekken gestart.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {jobs.map((job) => (
+            <li
+              key={job.id}
+              className="border rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-900 transition"
+            >
+              <Link href={`/messages/${job.id}`}>
+                <div className="flex justify-between">
+                  <span className="font-medium">{job.title}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {job.status}
+                  </span>
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
