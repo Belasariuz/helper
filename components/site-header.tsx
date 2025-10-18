@@ -22,41 +22,90 @@ export function SiteHeader() {
   const supabase = createSupabaseBrowser();
 
   const [notifications, setNotifications] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<"customer" | "helper" | null>(null);
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push("/auth/login");
-  }
-
-  // 🧭 Haal huidige gebruiker + rol op
+  // 🧭 Haal huidige gebruiker en profiel op
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
       if (data?.user) {
         setUserId(data.user.id);
-
-        // ✅ Haal profiel en rol op
         const { data: profile } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", data.user.id)
           .single();
-
-        if (profile?.role === "helper" || profile?.role === "customer") {
-          setRole(profile.role);
-          console.log("[Header] Gebruikersrol:", profile.role);
-        }
+        if (profile?.role) setRole(profile.role);
       }
     })();
   }, []);
 
-  // 📡 Luister naar realtime events
+  // 📬 Tellen van ongelezen berichten
   useEffect(() => {
     if (!userId) return;
 
-    console.log("[🔔] Notificatie listener gestart:", userId);
+    async function countUnread() {
+      console.log("[Header] 📬 Ongelezen berichten tellen...");
+
+      // Alle jobs waar gebruiker bij betrokken is
+      const { data: jobs } = await supabase
+        .from("jobs")
+        .select("id")
+        .or(`customer_id.eq.${userId},helper_id.eq.${userId}`);
+
+      if (!jobs?.length) return;
+
+      const jobIds = jobs.map((j) => j.id);
+
+      const { count } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .in("job_id", jobIds)
+        .neq("sender_id", userId)
+        .eq("read", false);
+
+      setUnreadCount(count || 0);
+    }
+
+    countUnread();
+
+    // Realtime updates
+    const channel = supabase
+      .channel("unread-counter")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as any;
+          if (msg.sender_id !== userId) {
+            setUnreadCount((prev) => prev + 1);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as any;
+          if (msg.read === true && msg.sender_id !== userId) {
+            setUnreadCount((prev) => Math.max(0, prev - 1));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId]);
+
+  // 🔔 Luister ook naar taakstatuswijzigingen en nieuwe berichten (toast)
+  useEffect(() => {
+    if (!userId) return;
+
+    console.log("[Header] 🔔 Realtime notificatie listener gestart:", userId);
 
     const channel = supabase
       .channel("notifications")
@@ -83,8 +132,7 @@ export function SiteHeader() {
           const { old, new: newData } = payload;
           if (
             old.status !== newData.status &&
-            (newData.customer_id === userId ||
-              newData.helper_id === userId)
+            (newData.customer_id === userId || newData.helper_id === userId)
           ) {
             setNotifications((prev) => prev + 1);
             toast({
@@ -105,25 +153,34 @@ export function SiteHeader() {
   useEffect(() => {
     if (pathname.startsWith("/messages") || pathname.startsWith("/dashboard")) {
       setNotifications(0);
+      setUnreadCount(0);
     }
   }, [pathname]);
 
-  // Dynamisch dashboard-pad
-  const dashboardPath =
+  // 🔗 Dynamische dashboard-link
+  const dashboardLink =
     role === "helper"
       ? "/dashboard/helper"
       : role === "customer"
       ? "/dashboard/customer"
       : "/dashboard";
 
+  // 📋 Navigatie-items
   const nav = [
     { href: "/", label: "Home", icon: Home },
-    { href: dashboardPath, label: "Dashboard", icon: MapPin },
+    { href: dashboardLink, label: "Dashboard", icon: MapPin },
     { href: "/jobs/new", label: "Nieuwe taak", icon: PlusCircle },
     { href: "/messages", label: "Berichten", icon: MessageSquare },
     { href: "/profile", label: "Profiel", icon: User },
   ];
 
+  // 🚪 Uitloggen
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/auth/login");
+  }
+
+  // 🧭 Render
   return (
     <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur dark:bg-gray-950/80">
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
@@ -157,10 +214,10 @@ export function SiteHeader() {
                 <Icon className="h-4 w-4" />
                 {item.label}
 
-                {/* 🔔 Badge */}
-                {item.href === "/messages" && notifications > 0 && (
+                {/* 🔴 Ongelezen berichtenbadge */}
+                {item.href === "/messages" && unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-600 text-[10px] text-white flex items-center justify-center">
-                    {notifications}
+                    {unreadCount}
                   </span>
                 )}
               </Link>

@@ -4,150 +4,167 @@ import { useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
 
 type Job = {
   id: string;
   title: string;
+  description: string;
   status: string;
   price: number;
   helper_id: string | null;
-  helper_name?: string | null;
+  profiles?: { name: string | null };
 };
 
 export default function CustomerDashboard() {
   const supabase = createSupabaseBrowser();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  // ✅ taken laden en realtime updates luisteren
+  // 🧭 Gebruiker ophalen
   useEffect(() => {
-    loadJobs();
-
-    // Luister naar wijzigingen in de jobs-tabel
-    const channel = supabase
-      .channel("jobs-realtime-customer")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "jobs" },
-        (payload) => {
-          console.log("[CustomerDashboard] 🔔 Realtime update:", payload);
-          loadJobs();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) setUserId(data.user.id);
+    })();
   }, []);
 
-  // ✅ taken ophalen uit Supabase
-  async function loadJobs() {
-    console.log("[CustomerDashboard] 📦 Taken ophalen...");
+  // 📦 Taken ophalen
+  useEffect(() => {
+    if (!userId) return;
+    async function loadJobs() {
+      console.log("[CustomerDashboard] 📦 Taken ophalen...");
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("id, title, description, status, price, helper_id, profiles:helper_id(name)")
+        .eq("customer_id", userId)
+        .order("created_at", { ascending: false });
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from("jobs")
-      .select(`
-        id,
-        title,
-        status,
-        price,
-        helper_id,
-        profiles:profiles!jobs_helper_id_fkey(name)
-      `)
-      .eq("customer_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("[CustomerDashboard] ❌ Fout bij ophalen:", error);
-    } else {
-      console.log("[CustomerDashboard] ✅ Taken:", data);
-
-      // helpernaam extraheren
-      const formatted = data.map((job: any) => ({
-        ...job,
-        helper_name: job.profiles?.name ?? null,
-      }));
-
-      setJobs(formatted);
+      if (error) console.error(error);
+      setJobs(data || []);
+      setLoading(false);
     }
+    loadJobs();
+  }, [userId]);
 
-    setLoading(false);
+  // ❌ Taak verwijderen
+  async function handleDelete(id: string) {
+    if (!confirm("Weet je zeker dat je deze taak wilt verwijderen?")) return;
+    const { error } = await supabase.from("jobs").delete().eq("id", id);
+    if (error) {
+      alert("Er ging iets mis bij het verwijderen van de taak.");
+    } else {
+      setJobs(jobs.filter((j) => j.id !== id));
+    }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Weet je zeker dat je deze taak wil verwijderen?")) return;
-    await supabase.from("jobs").delete().eq("id", id);
-    setJobs(jobs.filter((j) => j.id !== id));
+  // ✅ Taak afronden
+  async function handleComplete(id: string) {
+    const { error } = await supabase
+      .from("jobs")
+      .update({ status: "completed" })
+      .eq("id", id);
+    if (error) alert("Er ging iets mis bij het afronden van de taak.");
+    else {
+      alert("🎉 Taak gemarkeerd als afgerond!");
+      setJobs(
+        jobs.map((j) =>
+          j.id === id ? { ...j, status: "completed" } : j
+        )
+      );
+    }
   }
 
   if (loading)
     return (
-      <p className="text-center text-muted-foreground mt-10">
-        Taken laden...
-      </p>
+      <div className="flex justify-center items-center h-[70vh]">
+        <Loader2 className="animate-spin w-6 h-6 text-gray-400" />
+      </div>
     );
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-10 space-y-6">
+    <div className="max-w-5xl mx-auto p-6 space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Mijn taken</h1>
+        <h1 className="text-2xl font-semibold">Dashboard (Klant)</h1>
         <Link href="/jobs/new">
-          <Button>Nieuwe taak</Button>
+          <Button className="bg-blue-600 hover:bg-blue-700">Nieuwe taak</Button>
         </Link>
       </div>
 
       {jobs.length === 0 ? (
-        <p className="text-muted-foreground text-center">
+        <p className="text-gray-500 mt-10 text-center">
           Je hebt nog geen taken geplaatst.
         </p>
       ) : (
-        <ul className="space-y-3">
+        <ul className="space-y-4">
           {jobs.map((job) => (
             <li
               key={job.id}
-              className="flex items-center justify-between border rounded-lg p-4"
+              className="flex flex-col md:flex-row md:items-center justify-between rounded-lg border p-4 bg-gray-50 dark:bg-gray-900"
             >
               <div>
-                <p className="font-medium">{job.title}</p>
-                <p className="text-sm text-muted-foreground">
-                  Status:{" "}
+                <p className="font-medium text-lg">{job.title}</p>
+                <p className="text-sm text-gray-600">
+                  {job.description?.slice(0, 80)}...
+                </p>
+                <p className="text-sm text-gray-700 mt-1">
+                  💰 €{job.price.toFixed(2)} |{" "}
                   <span
-                    className={
+                    className={`font-semibold ${
                       job.status === "open"
-                        ? "text-gray-500"
-                        : job.status === "accepted"
                         ? "text-blue-600"
-                        : job.status === "completed"
+                        : job.status === "accepted"
                         ? "text-green-600"
-                        : "text-yellow-600"
-                    }
+                        : "text-gray-500"
+                    }`}
                   >
-                    {job.status}
-                  </span>{" "}
-                  – €{job.price.toFixed(2)}
+                    {job.status === "completed" ? "Afgerond" : job.status}
+                  </span>
                 </p>
 
-                {/* 👇 toon helpernaam als taak is geaccepteerd */}
-                {job.helper_name && (
-                  <p className="text-xs text-gray-500">
-                    Helper: {job.helper_name}
+                {job.profiles?.name && (
+                  <p className="text-sm text-gray-500">
+                    👷 Helper: {job.profiles.name}
                   </p>
                 )}
               </div>
 
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => handleDelete(job.id)}
-              >
-                Verwijderen
-              </Button>
+              <div className="flex gap-2 mt-3 md:mt-0">
+                <Link href={`/jobs/${job.id}`}>
+                  <Button variant="secondary" size="sm">
+                    📋 Bekijk details
+                  </Button>
+                </Link>
+
+                {job.status === "accepted" && (
+                  <Link href={`/messages/${job.id}`}>
+                    <Button variant="outline" size="sm">
+                      💬 Chat
+                    </Button>
+                  </Link>
+                )}
+
+                {job.status === "open" && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleDelete(job.id)}
+                  >
+                    Verwijderen
+                  </Button>
+                )}
+
+                {job.status === "accepted" && (
+                  <Button
+                    size="sm"
+                    className="bg-green-600 hover:bg-green-700"
+                    onClick={() => handleComplete(job.id)}
+                  >
+                    ✅ Markeer als afgerond
+                  </Button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
